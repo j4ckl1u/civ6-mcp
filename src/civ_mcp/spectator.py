@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from civ_mcp.connection import GameConnection
+    from civ_mcp.game_state import GameState
 
 log = logging.getLogger(__name__)
 
@@ -104,15 +105,21 @@ class CameraController:
 
     Call push(x, y) from any tool. The controller dequeues events in the
     background, fires UI.LookAtPlot, and waits CAMERA_DWELL seconds before
-    the next hop. Pauses automatically during active diplomacy screens.
+    the next hop. Pauses during diplomacy screens and AI turn processing.
     """
 
-    def __init__(self, conn: "GameConnection") -> None:
+    def __init__(
+        self, conn: "GameConnection", game_state: "GameState | None" = None
+    ) -> None:
         self._conn = conn
+        self._game_state = game_state
         self._queue: asyncio.Queue[CameraEvent] = asyncio.Queue(
             maxsize=CAMERA_QUEUE_MAX
         )
         self._task: asyncio.Task | None = None
+
+    def _should_send_ingame(self) -> bool:
+        return not (self._game_state and self._game_state._pending_end_turn)
 
     def push(self, x: int, y: int, label: str = "") -> None:
         """Push a camera event. Drops the oldest event if the queue is full."""
@@ -168,30 +175,37 @@ class CameraController:
         while True:
             event = await self._queue.get()
             # Hold until diplomacy screen closes.
-            while True:
+            while self._should_send_ingame():
                 try:
                     if not await self._is_diplomacy_active():
                         break
                 except Exception:
                     break
                 await asyncio.sleep(0.5)
-            await self._look_at(event.x, event.y)
+            if self._should_send_ingame():
+                await self._look_at(event.x, event.y)
             await asyncio.sleep(CAMERA_DWELL)
 
 
 class PopupWatcher:
-    """Auto-dismisses non-critical popups after POPUP_DISMISS_DELAY seconds.
+    """Auto-dismiss popups while avoiding InGame calls during AI turn processing.
 
-    Polls the InGame UI every POPUP_POLL_INTERVAL seconds. Pauses completely
-    while diplomacy screens are active (CRITICAL status).
+    Polls the InGame UI every POPUP_POLL_INTERVAL seconds, leaves diplomacy
+    screens untouched, and pauses InGame polling during AI turns.
     """
 
-    def __init__(self, conn: "GameConnection") -> None:
+    def __init__(
+        self, conn: "GameConnection", game_state: "GameState | None" = None
+    ) -> None:
         self._conn = conn
+        self._game_state = game_state
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="popup-watcher")
+
+    def _should_poll_ingame(self) -> bool:
+        return not (self._game_state and self._game_state._pending_end_turn)
 
     async def stop(self) -> None:
         if self._task:
@@ -246,30 +260,38 @@ class PopupWatcher:
         while True:
             await asyncio.sleep(POPUP_POLL_INTERVAL)
             _iteration += 1
-            try:
-                status = await self._poll()
-                now = asyncio.get_running_loop().time()
-
-                if status == "POPUP":
-                    if first_seen is None:
-                        first_seen = now
-                    elif now - first_seen >= POPUP_DISMISS_DELAY:
-                        log.debug(
-                            "PopupWatcher: dismissing popup after %.1fs",
-                            now - first_seen,
-                        )
-                        await dismiss_popup(self._conn)
-                        first_seen = None
-                else:
-                    # CRITICAL or CLEAR — reset timer
-                    first_seen = None
-
-            except Exception:
+            ai_turn_processing = not self._should_poll_ingame()
+            if ai_turn_processing:
+                # end_turn polls GameCore while the AI processes. InGame Lua
+                # queries from this watcher can stall that processing.
                 first_seen = None
+            else:
+                try:
+                    status = await self._poll()
+                    now = asyncio.get_running_loop().time()
+
+                    if status == "POPUP":
+                        if first_seen is None:
+                            first_seen = now
+                        elif now - first_seen >= POPUP_DISMISS_DELAY:
+                            log.debug(
+                                "PopupWatcher: dismissing popup after %.1fs",
+                                now - first_seen,
+                            )
+                            await dismiss_popup(self._conn)
+                            first_seen = None
+                    else:
+                        # CRITICAL or CLEAR — reset timer
+                        first_seen = None
+                except Exception:
+                    first_seen = None
 
             # Periodically check for Win32 crash reporter dialogs.
             # These are OS-level dialogs outside the game's Lua layer.
             if _iteration % _crash_check_interval == 0:
                 await self._dismiss_crash_dialogs()
-                if os.environ.get("CIV_MCP_AUTO_DISMISS_CONFIRMATIONS") == "1":
+                if (
+                    ai_turn_processing
+                    and os.environ.get("CIV_MCP_AUTO_DISMISS_CONFIRMATIONS") == "1"
+                ):
                     await self._dismiss_game_confirmation()

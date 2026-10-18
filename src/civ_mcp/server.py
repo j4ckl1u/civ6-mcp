@@ -323,8 +323,8 @@ async def lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         await _auto_boot(conn, save_file)
 
     # Spectator-mode background services (camera tracking + popup auto-dismiss)
-    camera = CameraController(conn)
-    popup_watcher = PopupWatcher(conn)
+    camera = CameraController(conn, gs)
+    popup_watcher = PopupWatcher(conn, gs)
     watchdog = GameOverWatchdog(gs, logger)
     camera.start()
     popup_watcher.start()
