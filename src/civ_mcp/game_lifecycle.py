@@ -35,6 +35,7 @@ async def dismiss_popup(conn: GameConnection) -> str:
         "InGamePopup",
         "GenericPopup",
         "PopupDialog",
+        "AdvisorPopup",
         "BoostUnlockedPopup",
         "GreatWorkShowcase",
         "WorldCongressPopup",
