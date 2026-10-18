@@ -191,6 +191,27 @@ cities, and play through the turn.
 
 The agent will orient with `get_game_overview`, scan the map for threats, move units, set production and research, handle diplomacy, and end the turn.
 
+### Run an unattended local game
+
+With Civ 6 already running and a game loaded, and Ollama serving locally, run:
+
+```bash
+uv run python scripts/auto_play.py
+```
+
+By default this uses `qwen7b-civ6:latest`, advances up to 330 turns, and
+writes a tool-call transcript under `logs/`. Override the model or limits with
+`--model`, `--ollama-url`, `--max-turns`, and `--max-tool-calls`. The script
+does not launch the game, load/reload saves, kill/restart the game, run raw Lua,
+or delete units; start it only after loading the game you want it to play.
+Close other Civ 6 MCP clients first: FireTuner allows only one active
+connection, and the MCP server uses local port 8000. Press Ctrl+C to stop the
+agent. The script executes only one model-requested tool at a time and prints
+30-second progress updates while `end_turn` waits for Civ 6 to finish processing
+AI turns. It also enables a throttled OCR check in the Civ 6 window for exact
+`OK` / `确定` / `确认` confirmation buttons and clicks the lowest matching
+button; diplomacy screens are left to the agent.
+
 ## As a benchmark
 
 Civilization VI is a compelling environment for evaluating LLM strategic reasoning. Games run 300+ turns with compounding decisions, incomplete information, and multiple competing objectives — a significant step up from single-turn or short-horizon tasks.

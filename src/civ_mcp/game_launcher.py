@@ -1986,6 +1986,46 @@ def _click_text(
     return True
 
 
+def _find_confirmation_button(
+    ocr_results: list[tuple[str, int, int, int, int]],
+) -> tuple[str, int, int, int, int] | None:
+    """Find an exact, localized confirmation button in OCR output."""
+    labels = {"ok", "okay", "确定", "确认"}
+    matches = [
+        result
+        for result in ocr_results
+        if result[0].strip().strip(" .,:;!").casefold() in labels
+    ]
+    return max(matches, key=lambda result: result[2]) if matches else None
+
+
+def _click_game_confirmation_sync() -> str | None:
+    """OCR the Civ VI window and click a visible localized OK button."""
+    if sys.platform not in ("win32", "darwin", "linux"):
+        return None
+
+    _require_gui_deps()
+    win = _find_game_window()
+    if win is None:
+        return None
+
+    match = _find_confirmation_button(_ocr_game_window(win))
+    if match is None:
+        return None
+
+    text, x, y, _, _ = match
+    _bring_to_front(pid=win.pid)
+    time.sleep(0.3)
+    _click(x, y)
+    log.info("OCR: clicked game confirmation button '%s' at (%d,%d)", text, x, y)
+    return text
+
+
+async def dismiss_game_confirmation() -> str | None:
+    """Async wrapper for OCR-based confirmation-button dismissal."""
+    return await asyncio.to_thread(_click_game_confirmation_sync)
+
+
 # ---------------------------------------------------------------------------
 # Crash dialog dismissal (Windows only)
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -209,6 +210,19 @@ class PopupWatcher:
         if dismissed:
             log.warning("PopupWatcher: dismissed crash dialog: %s", dismissed)
 
+    @staticmethod
+    async def _dismiss_game_confirmation() -> None:
+        """OCR the game window for an explicit localized OK button."""
+        from civ_mcp.game_launcher import dismiss_game_confirmation
+
+        try:
+            dismissed = await dismiss_game_confirmation()
+        except Exception:
+            log.warning("PopupWatcher: confirmation OCR failed", exc_info=True)
+            return
+        if dismissed:
+            log.info("PopupWatcher: clicked game confirmation button %r", dismissed)
+
     async def _poll(self) -> str:
         """Returns 'POPUP', 'CRITICAL', or 'CLEAR'."""
         try:
@@ -257,3 +271,5 @@ class PopupWatcher:
             # These are OS-level dialogs outside the game's Lua layer.
             if _iteration % _crash_check_interval == 0:
                 await self._dismiss_crash_dialogs()
+                if os.environ.get("CIV_MCP_AUTO_DISMISS_CONFIRMATIONS") == "1":
+                    await self._dismiss_game_confirmation()
